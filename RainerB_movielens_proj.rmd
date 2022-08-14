@@ -1,0 +1,2368 @@
+---
+title: "HarvardX PH125.9x Capstone - project movielens"
+author: "Rainer Baumgartner"
+date: '2022-08-14'
+output:
+  pdf_document: default
+  
+---
+
+#  Table of content
+1. Introduction
+1. Data import
+1. Loading additional packages
+1. A quick view on the movielens-data
+1. Further data preparation
+1. Movielens data exploration and visualization
+1. Methods and techniques
+1. Building the prediction models
+1. Final evaluation 
+1. Conclusion
+
+
+\newpage
+#  Introduction
+
+ *'PH125.9x:Data Science: Capstone'*  is the final course in the *'HarvardX Data Science Professional Certificate'* program.
+ 
+One of the graded components of this course is the *'Movielens Project'*.
+
+The data for this project are based on the 10M version of the movieLens dataset is available here: <https://grouplens.org/datasets/movielens/10m/>.
+
+It contains 10 million ratings applied to 10,000 movies by 72,000 user and was released in 1/2009. 
+
+The data are provided by [MovieLens](https://en.wikipedia.org/wiki/MovieLens).
+
+The aim of the *'Movielens Project'* is to develop and train a recommendation machine learning algorithm with R to predict a rating given by an user to a movie in the dataset. 
+
+The tool for the project is R. [R is a free software environment for statistical computing and graphics.](https://www.r-project.org/) 
+
+To evaluate the accuracy of the algorithm, the Residual Mean Square Error (RMSE) will be used.  
+The target is to achieve full points for the result with an RMSE  < 0.86490.
+
+The RMSE is then defined as: 
+
+$$
+\mbox{RMSE} = \sqrt{\frac{1}{N} \sum_{u,m}^{} \left( \hat{y}_{u,m} - y_{u,m} \right)^2 }
+$$
+ $y_{u,m}$ is defined as the rating for movie $m$ by user $u$ and  $\hat{y}_{u,m}$ is the corresponding predicted rating. 
+ ${N}$ is the total number of ratings.
+
+This report will present a data-review, the data-processing, methods, analysis, results and a conclusion.
+
+\newpage
+# Data import
+
+Before any review or analysis, the data needs to be downloaded, prepared and split into training- and test-data.
+
+HarvardX provides the R-Code for the input. As the author experienced, it is essential to run the correct code refering to R-Versions *'R 4.0 or later'* versus *'R 3.6 or earlier'*. 
+In the code below the R3.6 code is 'out-commented' by the author, to adapt to the authors installation.
+
+```{r data import, eval=TRUE, collapse = TRUE, warning=FALSE}
+#____________________________________________________________________________
+    
+# * Data import ------------------------------------------------------------
+#____________________________________________________________________________
+
+##########################################################
+# Create edx set, validation set (final hold-out test set)
+##########################################################
+
+# Note: this process could take a couple of minutes
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(data.table)
+
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+dl <- tempfile()
+download.file("https://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+
+# if using R 3.6 or earlier: 
+#movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId],
+                                           # title = as.character(title),
+                                            #genres = as.character(genres))
+# if using R 4.0 or later:
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
+                                            title = as.character(title),
+                                            genres = as.character(genres))
+
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Validation set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+      semi_join(edx, by = "movieId") %>%
+      semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+```
+
+# Load additional packages
+R has many built-in base functions. R packages provide additional functions for certain purposes, like improved graphics or algorithms.
+Some packages where already installed and loaded with the code provided by HarvardX for the data import.
+
+The following code installs (if necessary) and loads other packages used in this project. 
+
+```` {r install packages if needed, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide" }
+
+#____________________________________________________________________________
+    
+# * Load additional packages --------------------------------------------
+#____________________________________________________________________________
+
+
+  # define required packages
+  packs <- c("lubridate", "ggthemes", "knitr", "gridExtra", "scales", "pryr", "tinytex" )
+  
+  # install packages (if needed)  and load them
+  for (package in packs) {
+    if (!require(package, character.only=T, quietly=T)) {
+      install.packages(package, repos = "http://cran.us.r-project.org")
+      library(package, character.only=T)
+    }
+  }
+
+````
+
+```` {r general settings and variables, echo=FALSE}
+
+#____________________________________________________________________________
+    
+# ** Switch of scientific number format -------------------------------------
+#____________________________________________________________________________
+
+  # Switch of scientific number format 
+        options(scipen=999)    #default=0
+
+````
+\newpage
+# A quick view on the movielens-data
+
+After the import the data-set *'edx'* represents the training-set whereas *'validation'* serves as very final test-set. Both sets have the same structure. 
+
+With str()-function we can check the data-structure:  
+``` {r edx summary, eval = TRUE}  
+
+#____________________________________________________________________________
+    
+# ** Check data structure --------------------------------------------------
+#____________________________________________________________________________
+
+  # check the data-structure edx    
+    str(edx)  
+
+```
+
+
+Comments to the variables:
+
+* userId is a unique identification number for each user giving ratings.  
+* movieId is a unique identification number for each movie.  
+* rating is a number for the rating of one movie by one user, ranging from 0.5 to 5.0 in steps of 0.5. It is defined as 0.5 = worst, 5.0 = best.  
+* timestamp indicates when the movie was rated. The figure represents seconds since midnight Coordinated Universal Time (UTC) of January 1, 1970.  
+* title is the name of the movie containing the year of the release. The title has a 1:1 relation to the movieId.  
+* genres are the piped genre categories assigned to the movie.  
+*  `-attr(*,...` in the last row is not part of the analysed data
+
+\newpage   
+With the head()-function we can see some data examples and use kable to make it look nice:  
+``` {r edx head, eval = TRUE}  
+
+#____________________________________________________________________________
+    
+# ** Data examples --------------------------------------------------
+#____________________________________________________________________________
+
+  # Data examples
+    knitr::kable(head(edx))  
+
+```
+
+# Further data preparation
+
+In order to optimize the data-structure and extract further information from the existing variables, this adaptions will be applied:
+
+  * add variable 'ts_date' with converted timestamp as [POSIX date.time](https://en.wikipedia.org/wiki/Unix_time)
+``` {r convert timestamp, eval = TRUE}
+
+#____________________________________________________________________________
+    
+# * Further data preparation -----------------------------------------------
+#____________________________________________________________________________
+
+#____________________________________________________________________________
+    
+# ** add variable 'ts_date' ------------------------------------------------
+#____________________________________________________________________________
+  
+    edx$ts_date <- date(as.POSIXct(edx$timestamp, origin="1970-01-01"))  
+
+```
+  
+  * extract the year when the movie was released (from the digits at the end of the movie-title) as a new variable 
+``` {r extract movie-year, eval = TRUE}
+
+#____________________________________________________________________________
+    
+# ** add movie year --------------------------------------------------------
+#____________________________________________________________________________
+      edx$year <- edx$title %>% str_sub(-5,-2) %>%  as.numeric() 
+
+```
+
+  * convert the genre from text to factor, for improved memory usage and performance
+``` {r convert the genre to factor, eval = TRUE}
+
+#____________________________________________________________________________
+    
+# ** convert genre to factor -----------------------------------------------
+#____________________________________________________________________________
+      edx$genres <- as.factor(edx$genres)
+
+```
+
+  * add a new variables 'rating-lag' and 'year.rating', indicating the lag between 'movie was released [year]' and 'movie was rated [year.rating]'. Remark: rating lags <0 will be converted to 0 in order to avoid potential problems with negative values. The investigation on the impact will be part of the data exploration.
+```` {r create rating-lag, eval = TRUE}
+
+#____________________________________________________________________________
+    
+# ** add variables year.rating & rating.lag --------------------------------
+#____________________________________________________________________________
+
+      edx <- edx %>% mutate ( year.rating = as.numeric(isoyear(ts_date)),
+                          rating_lag =  year.rating - year,
+                          rating_lag = ifelse (rating_lag<0,0,rating_lag)) 
+
+````
+
+\newpage
+# Movielens data exploration and visualization
+
+## Rating
+The target of the project is to predict a rating, thus let's first look at the rating itself.
+As already mentioned before, rating is a number ranging from 0.5 to 5.0 in steps of 0.5. It is defined as 0.5 = worst, 5.0 = best.
+
+```` {r number of ratings , echo=FALSE}
+
+#____________________________________________________________________________
+    
+# * Data expolation: ratings ------------------------------------------------
+#____________________________________________________________________________
+
+
+  n.ratings <- length(edx$rating)
+
+````
+The total number of ratings is `r n.ratings` and equals the length of the edx dataset.
+
+Summing up all ratings (0.5...5) and divide the sum by the total number of ratings, will give us the average rating. 
+Throughout the project we will name this variable as **'mu'** for the greek letter **'$\mu$'**.
+
+We calculate mu for further use:
+```` {r calculate mu , echo=TRUE, results = "hide" }
+
+#____________________________________________________________________________
+    
+# ** calculate mu ----------------------------------------------------------
+#____________________________________________________________________________
+
+  mu <- mean(edx$rating)  #calculate the average rating
+
+````
+
+The bar plot shows the distribution (in %) for each rating and the calculated mu:
+
+```` {r plot number of ratings , message=FALSE, warning=FALSE,  echo = FALSE, eval=TRUE,  fig.align = 'center', out.width = "60%", out.heights = "60%"}
+
+#____________________________________________________________________________
+    
+# ** P: rating -------------------------------------------------------------
+#____________________________________________________________________________
+
+
+#barplot number of ratings
+edx %>% 
+    select ( rating) %>% 
+    group_by(rating) %>% 
+    summarize( pertcentage= n()  / length(edx$rating) )  %>% 
+    ggplot(aes(rating, pertcentage)) +
+    geom_bar (stat="identity", col="blue", fill="steelblue" )   +
+    geom_text(aes(label=paste(round(pertcentage*100),"%",sep='')), vjust=-1) +
+    geom_vline(xintercept = mean(edx$rating),
+               linetype='dashed', col='firebrick1') +
+    annotate('text', label=paste('mu=', round(mean(edx$rating),4),sep = ''  ), 
+             x=mean(edx$rating)*0.97, y=0.3 , col="firebrick1", angle = 90 )+
+    scale_y_continuous(labels = percent, limits = c(0, .4))  +
+    scale_x_continuous( labels=seq(0.5,5,0.5), breaks = seq(0.5,5,0.5)) +
+    ggtitle("number of ratings  (%) ") +
+    theme_hc() +
+    labs( tag= "P: Rating", y = "percentage" ) 
+
+````
+
+We observe a left-skewed distribution and under-represented 'half-value' ratings.
+
+\newpage
+## Movies
+
+```` {r number of movies , echo=FALSE, results = "hide"}
+#____________________________________________________________________________
+    
+# * Data expolation: movies ------------------------------------------------
+#____________________________________________________________________________
+
+  n.movies <- length(unique(edx$movieId))
+
+
+````
+The data-set edx contains `r n.movies` movies.
+
+This histogram shows the number of ratings per movie:
+```` {r plot ratings per movie , echo=FALSE, fig.align = 'center', out.width = "60%", out.heights = "60%"}
+
+#____________________________________________________________________________
+    
+# ** P: movie 1 ------------------------------------------------------------
+#____________________________________________________________________________
+
+
+# median of ratings per movie
+  median.n_ratings <- edx %>% group_by(movieId) %>%  
+  summarise(n.movieratings=n()) %>% .$n.movieratings %>% median()
+ 
+# plot ratings per movie 
+   edx %>% 
+      count(movieId) %>% 
+        ggplot(aes(n)) + 
+        geom_histogram(bins = 30, col="blue", fill="lightblue" ) + 
+        geom_vline(xintercept = median.n_ratings,linetype='dashed', col='firebrick1') +
+        annotate('text', label='m e d i a n', 
+                 x=median.n_ratings*0.85, y=400, col="firebrick1", angle = 90 )+
+        scale_x_log10() + 
+        ggtitle("number of ratings per movie") + 
+        labs(x = 'number of ratings (log10 scaled)', y = 'number of movies') +
+        theme_hc() +
+        labs(tag = "P: movie 1" ) 
+    
+````
+
+Most movies are rated 1 - ca. 150 times (the median is `r median.n_ratings`), but some movies are extremly often rated.
+
+Let's have a look on the 10 most rated movies:
+
+```` {r table 5 most rated movies , message=FALSE, warning=FALSE, echo=FALSE}
+
+#____________________________________________________________________________
+    
+# ** T: 5 most rated movies ------------------------------------------------
+#____________________________________________________________________________
+
+  movie_ratings <- 
+        edx %>% select (movieId,  title, rating) %>% 
+        group_by (movieId, title) %>% 
+        summarize(n_ratings = n(), avg_rating=mean(rating)) %>% 
+        ungroup() 
+      
+  movie_ratings %>% arrange(desc(n_ratings)) %>% 
+        head(10) %>% kable(caption = "movies with most ratings")
+
+
+
+    
+````
+
+
+Is there any influence of the number of ratings on the given rating? 
+
+```` {r movie plot number of ratings vs avg rating , echo=FALSE, message=FALSE, warning=FALSE,  fig.align = 'center', out.width = "60%", out.heights = "60%"}
+
+#____________________________________________________________________________
+    
+# ** P: movie 2 (incl. define sigma) ---------------------------------------
+#____________________________________________________________________________
+
+  # define sigma
+      sigma = sd(edx$rating)
+
+  # plot number of ratings vs. avg rating: 
+     edx %>% 
+          select (movieId, rating) %>% 
+          group_by (movieId) %>% 
+          summarize(n_ratings = n(), avg_rating = mean(rating))  %>%
+          #mutate(movieId = reorder(movieId, avg_rating, FUN = median)) %>%  
+          mutate(rank = dense_rank(avg_rating)) %>%    
+          ggplot(aes(n_ratings, avg_rating, col=rank)) +
+          geom_point(alpha=0.2) +
+          geom_smooth(col="orange", method = lm) +
+          geom_hline(yintercept=mu, linetype='solid', col="firebrick1")+
+          geom_hline(yintercept=mu+sigma, linetype='dashed', col="firebrick1")+
+          geom_hline(yintercept=mu-sigma, linetype='dashed', col="firebrick1")+
+          annotate('text', label=paste("mu=",round(mu,4), sep=''), 
+                   x=2.5, y=mu*1.05 , col="firebrick1" )+
+          ggtitle("movies: avg rating vs number of ratings ", 
+                  subtitle="incl. linear regression line") + 
+          theme_hc() +
+          theme(legend.position = "none")+
+          scale_x_log10() +
+          labs(tag = "P: movie 2", x = 'number of ratings per movie (log10 scaled)', 
+               y = 'average rating' ) 
+      
+````
+
+There seems to be a slight positive correlation. We can see only a few ratings \<=1 from around 300 number of ratings on wards. 
+On the other hand, all movies rated by >04.5 have less then 10 ratings. 
+
+General information: The dashed lines, `r round(sigma,4)` ratings above and below 'mu', represent the 1 $\sigma$ (or standard deviation) borders. 
+
+The rating is what we want to predict, thus we check the influence of the movie itself on the given ratings (movieId ordered by ascending rating):
+
+```` {r plot avg rating vs movie , echo=FALSE, fig.align = 'center', out.width = "60%", out.heights = "60%"}
+ 
+
+#____________________________________________________________________________
+    
+# ** P: movie 3 ------------------------------------------------------------
+#____________________________________________________________________________
+
+   # average rating vs movies
+    edx %>% 
+      select (movieId, rating) %>% 
+      group_by (movieId) %>% 
+      summarize(n_ratings = n(), avg_rating = mean(rating))  %>%
+      mutate(movieId = reorder(movieId, avg_rating, FUN = median)) %>% 
+      mutate(rank = dense_rank(avg_rating)) %>%   
+      ggplot(aes(movieId, avg_rating, size=10*n_ratings, col=rank)) +
+      geom_point( alpha=0.2) +
+      geom_hline(yintercept=mu, linetype='solid', col="firebrick1")+
+      geom_hline(yintercept=mu+sigma, linetype='dashed', col="firebrick1")+
+      geom_hline(yintercept=mu-sigma, linetype='dashed', col="firebrick1")+
+      annotate('text', label=paste("mu=",round(mu,4), sep=''), 
+               x=2000, y=mu*1.05 , col="firebrick1" )+
+      ggtitle("average rating vs movies  " ,  
+              subtitle =  'point size refers to number of ratings') +
+      theme_hc() +
+      theme(axis.text.x=element_blank(),
+            axis.ticks.x=element_blank(),
+            legend.position = "none") +
+      labs(tag = "P: movie 3", 
+           x = paste('movies (', n.movies, ') sorted by avg. rating', sep=''), 
+           y = 'average rating' ) 
+      
+
+````
+
+The variance of the data is clearly visible.
+
+\newpage
+
+Here are the 10 best / worst rated movies:
+
+```` {r tables best worst movie , message=FALSE, warning=FALSE, , echo=FALSE}
+
+#____________________________________________________________________________
+    
+# ** T: tables best worst movie  -------------------------------------------
+#____________________________________________________________________________
+
+  
+### look at the bottom/top movies in terms of avg rating
+
+    movie_ratings %>% arrange(desc(avg_rating)) %>% 
+      head (10) %>% kable(caption = "Movies with best ratings")
+      
+    movie_ratings %>% arrange(avg_rating) %>% 
+      head (10) %>% kable(caption = "Movies with worst ratings")
+  
+rm(movie_ratings)
+gc()
+
+````
+
+Note that these best/worst ratings have very view reviews by users (n_ratings). We already noticed similar observations in the plot 'P: movie 2'. 
+Additionally, at least from the authors pov, the movies are not very famous. 
+
+Is it correct/fair to say 'Hellhounds on My Trail' (rated by one user with 5) is a better movie than (the most rated movie with 31362 ratings) 'Pulp Fiction' with an average rating of 4.15?
+We can not give the answer here, but we will consider this when we apply regularization ( see chapter 'Methods and analysis' ).
+
+
+\newpage
+## User
+```` {r n user ratings , echo=FALSE, results = "hide"}
+
+#____________________________________________________________________________
+    
+# * Data expolation: users ------------------------------------------------
+#____________________________________________________________________________
+
+# number of users
+  n.user <- length(unique(edx$userId))  
+
+````
+
+In edx we find `r n.user` users giving ratings.
+
+```` {r max user ratings , echo=FALSE, results = "hide"}
+
+#user with most ratings
+  max.user.ratings <- edx %>% group_by(userId) %>% 
+    summarize(n=n()) %>% summarize(max=max(n))
+
+````
+
+The maximal number of ratings by an user is `r max.user.ratings`.
+
+We can see the distribution of ratings in the histogram.
+```` {r plot ratings per user , echo=FALSE, fig.align = 'center', out.width = "60%", out.heights = "60%"}
+
+#____________________________________________________________________________
+    
+# ** P: user 1 -------------------------------------------------------------
+#____________________________________________________________________________
+ 
+  
+#median of ratings per user
+  median.n_ratings <- edx %>% group_by(userId) %>%  
+  summarise(n.user_ratings=n()) %>% .$n.user_ratings %>% median()
+  
+# number of ratings per user  
+  edx %>% 
+    count(userId) %>% 
+    ggplot(aes(n)) + 
+    geom_histogram(bins = 30, col="blue", fill="lightblue" ) + 
+    geom_vline(xintercept = median.n_ratings,linetype='dashed', col='firebrick1') +
+    annotate('text', label='m e d i a n', 
+             x=median.n_ratings*0.88, y=4000 , col="firebrick1", angle = 90 )+
+    scale_x_log10() + 
+    ggtitle("number of ratings per user") + 
+    labs(x = 'number of ratings (log10 scaled)', y = 'number of users') +
+    theme_hc() +
+    labs(tag = "P: user 1")
+  
+````
+
+The distribution is right skewed (especially when considering the log10 scales axis).
+
+```` {r plot user number of ratings vs avg rating , echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "60%"}
+
+#____________________________________________________________________________
+    
+# ** P: user 2 -------------------------------------------------------------
+#____________________________________________________________________________
+
+#plot user number of ratings vs avg rating
+   
+  edx %>% 
+    select (userId, rating) %>% 
+    group_by (userId) %>% 
+    summarize(n_ratings = n(), avg_rating = mean(rating))  %>%
+    mutate(rank = dense_rank(avg_rating)) %>%    
+    ggplot(aes(n_ratings, avg_rating, col=rank)) +
+    geom_point(alpha=0.1) +
+    geom_smooth(col="orange" , method = lm) +
+    geom_hline(yintercept=mu, linetype='solid', col="firebrick1")+
+    geom_hline(yintercept=mu+sigma, linetype='dashed', col="firebrick1")+
+    geom_hline(yintercept=mu-sigma, linetype='dashed', col="firebrick1")+
+    annotate('text', label=paste("mu=",round(mu,4), sep=''), 
+             x=3000, y=mu*1.05 , col="firebrick1" )+
+    ggtitle("user: avg rating vs number of ratings ", 
+            subtitle="incl. linear regression line") + 
+    theme_hc() +
+    theme(legend.position = "none") +
+    scale_x_log10() +
+    labs(tag = "P: user 2", x = 'number of ratings per user (log10 scaled)', 
+         y = 'average rating' ) 
+  
+````
+
+Here is no huge trend visible, but the variability decreases with the number of users.
+
+```` {r plot avg rating vs user , echo=FALSE, fig.align = 'center', out.width = "60%", out.heights = "60%"}
+ 
+#____________________________________________________________________________
+    
+# ** P: user 3 -------------------------------------------------------------
+#____________________________________________________________________________
+
+# plot average rating vs users
+
+  edx %>% 
+    select (userId, rating) %>% 
+    group_by (userId) %>% 
+    summarize(n_ratings = n(), avg_rating = mean(rating))  %>%
+    mutate(userId = reorder(userId, avg_rating, FUN = median)) %>% 
+    mutate(rank = dense_rank(avg_rating)) %>%   
+    ggplot(aes(userId, avg_rating, size=10*n_ratings, col=rank)) +
+    geom_point( alpha=0.2) +
+    geom_hline(yintercept=mu, linetype='solid', col="firebrick1")+
+    geom_hline(yintercept=mu+sigma, linetype='dashed', col="firebrick1")+
+    geom_hline(yintercept=mu-sigma, linetype='dashed', col="firebrick1")+
+    annotate('text', label=paste("mu=",round(mu,4), sep=''), 
+             x=9000, y=mu*1.05 , col="firebrick1" )+
+    ggtitle("average rating vs users  " ,  
+            subtitle =  'point size refers to number of ratings') +
+    theme_hc() +
+    theme(axis.text.x=element_blank(),
+          axis.ticks.x=element_blank(),
+          legend.position = "none") +
+    labs(tag = "P: user 3", 
+         x = paste('users (', n.user, ') sorted by avg. rating', sep=''),  
+         y = 'average rating' ) 
+  
+````
+
+Apart of the very extremes (low/high rating), the values are quite close to mu. A bit more moderate variability compared to movies.
+ 
+\newpage 
+
+## Genres
+
+```` {r number of genres , echo=FALSE, results = "hide"}
+
+#____________________________________________________________________________
+    
+# * Data expolation: genres ------------------------------------------------
+#____________________________________________________________________________
+
+    n.genres <- length(unique(edx$genres))
+
+````
+
+As already mentioned, the genres are piped: A movie can be assigned to several genres, the genres are separated by '\|' .
+There are `r n.genres` piped genres, i.e. different combinations of individual genres.
+
+
+```` {r plot ratings per genre , echo=FALSE, fig.align = 'center', out.width = "60%", out.heights = "50%"}
+
+#____________________________________________________________________________
+    
+# ** P: genres 1 -----------------------------------------------------------
+#____________________________________________________________________________
+
+#median genres
+
+  median.n_ratings <- edx %>% group_by(genres) %>%  summarise(n_ratings=n()) %>% .$n_ratings %>% median()
+ 
+  
+# number of ratings per genre 
+
+  edx %>% 
+    count(genres) %>% 
+    ggplot(aes(n)) + 
+    geom_histogram(bins = 30, col="blue", fill="lightblue" ) + 
+    geom_vline(xintercept = median.n_ratings,linetype='dashed', col='firebrick') +
+    annotate('text', label='m e d i a n', 
+             x=median.n_ratings*0.8, y=60 , col="firebrick", angle = 90 )+
+    scale_x_log10() + 
+    ggtitle("number of ratings per genres") + 
+    labs(x = 'number of ratings (log10 scaled)', y = 'number of genres') +
+    theme_hc() +
+    labs(tag = "P: genres 1")
+  
+````
+
+\newpage
+
+Lets have a glimpse on some extreme genres:
+
+```` {r tables genres 1, message=FALSE, warning=FALSE,  echo=FALSE}
+
+#____________________________________________________________________________
+    
+# ** T: genres 1 -----------------------------------------------------------
+#____________________________________________________________________________
+
+
+  # tables movies/ratings per piped genres (tail / head)
+    # kable has trouble showing "|" in R but not in RMD
+  
+#genres, movies
+    edx %>% 
+      select (genres, movieId) %>% 
+      group_by (genres) %>% summarize(n.movie=n()) %>% 
+      arrange(desc(n.movie)) %>% 
+      head(n=6) %>% kable(caption = "Genres with most movies")  
+    
+    edx %>% 
+      select (genres, movieId) %>% 
+      group_by (genres) %>% summarize(n.movie=n()) %>% 
+      arrange(desc(n.movie)) %>% 
+      tail(n=6) %>% kable(caption = "Genres with least movies")  
+
+````
+
+
+```` {r tables genres 2, message=FALSE, warning=FALSE,  echo=FALSE}
+
+#____________________________________________________________________________
+    
+# ** T: genres 2 -----------------------------------------------------------
+#____________________________________________________________________________
+
+#genres, rating
+    edx %>% 
+      select (genres, rating) %>% 
+      group_by (genres) %>% summarize(avg_rating=mean(rating)) %>% 
+      arrange(desc(avg_rating)) %>% 
+      head(n=6) %>% kable(caption = "Genres with best ratings")  
+    
+    edx %>% 
+      select (genres, rating) %>% 
+      group_by (genres) %>% summarize(avg_rating=mean(rating)) %>% 
+      arrange(desc(avg_rating)) %>% 
+      tail(n=6) %>% kable(caption = "Genres with worst ratings") 
+
+````
+
+\newpage
+
+For all the individual (not piped) genres, the plot presents the number of movies per 'unpiped' genre:
+
+```` {r plot unpiped genres, echo=FALSE, fig.align = 'center', out.width = "60%", out.heights = "50%"}
+
+#____________________________________________________________________________
+    
+# ** P: genres 2 -----------------------------------------------------------
+#____________________________________________________________________________
+
+
+# genres unpiped as data.frame
+    genres.unpiped <- edx %>% select (movieId, genres) %>% 
+      separate_rows(genres, sep = "\\|") %>% 
+      group_by(genres) %>% summarize (n.movie=n()) %>% 
+      mutate(genres =as.factor(genres))
+    
+# bar chart with movies per unpiped genre
+    genres.unpiped %>% 
+      mutate(genres = reorder(genres, desc(n.movie), FUN=median))  %>% 
+      ggplot(aes(genres, n.movie)) +
+      geom_col(col="blue", fill="lightblue" )+
+      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+      ggtitle("movies per genre", subtitle = " 'unpiped' genres ") +
+      theme_hc() +
+      labs(tag= "P: Genre 2", y = "number of movies" ) 
+   
+rm(genres.unpiped)
+gc()
+
+````
+
+Also for genres we check the average rating against number of ratings:
+
+````{r plot genre avg rating vs nmbr of ratings,echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "50%" }
+
+
+#____________________________________________________________________________
+    
+# ** P: genres 3 -----------------------------------------------------------
+#____________________________________________________________________________
+
+# plot  genres avg rating  vs nmbr of ratings : 
+  edx %>% 
+    select (genres, rating) %>% 
+    group_by (genres) %>% 
+    summarize(n_ratings = n(), avg_rating = mean(rating))  %>%
+    mutate(rank = dense_rank(avg_rating)) %>%    
+    ggplot(aes(n_ratings, avg_rating, col=rank)) +
+    geom_point(alpha=0.2) +
+    geom_smooth(col="orange", method=lm) +
+    geom_hline(yintercept=mu, linetype='solid', col="firebrick")+
+    geom_hline(yintercept=mu+sigma, linetype='dashed', col="firebrick")+
+    geom_hline(yintercept=mu-sigma, linetype='dashed', col="firebrick")+
+    annotate('text', label=paste("mu=",round(mu,4), sep=''), 
+             x=5, y=mu*1.03 , col="firebrick1" )+
+    ggtitle("genres: avg rating vs number of ratings", 
+            subtitle="incl. linear regression line") + 
+    theme_hc() +
+    theme(legend.position = "none")+
+    scale_x_log10() +
+    labs(tag = "P: genres 3", 
+         x = 'number of ratings (log10 scaled)', 
+         y = 'average rating' ) 
+
+````
+
+The data are very scattered, not showing much of pattern.
+
+
+```` {r plot genres avg rating, echo=FALSE, fig.align = 'center', out.width = "60%", out.heights = "50%"}
+
+#____________________________________________________________________________
+    
+# ** P: genres 4 -----------------------------------------------------------
+#____________________________________________________________________________
+
+
+ 
+##Genres rating effect 
+  edx %>% 
+    select (genres, rating) %>% 
+    group_by (genres) %>% 
+    summarize(n_ratings = n(), avg_rating = mean(rating))  %>%
+    mutate(genres = reorder(genres, avg_rating, FUN = sum)) %>% 
+    ggplot(aes(genres, avg_rating, size=10*n_ratings, col=avg_rating)) +
+    geom_point(col="steelblue", alpha=0.2) +
+    geom_hline(yintercept=mu, linetype='solid', col="firebrick1")+
+    geom_hline(yintercept=mu+sigma, linetype='dashed', col="firebrick1")+
+    geom_hline(yintercept=mu-sigma, linetype='dashed', col="firebrick1")+
+    annotate('text', label=paste("mu=",round(mu,4), sep=''), 
+             x=100, y=mu*1.05 , col="firebrick1" )+
+    ggtitle("avg rating vs genres", 
+            subtitle =  'point size refers to number of ratings')+
+    theme_hc() +
+    theme(axis.text.x=element_blank(),
+          axis.ticks.x=element_blank(),
+          legend.position = "none") +
+    labs(tag = "P: genres 4", 
+         x = paste('genres (',n.genres , ') sorted by avg. rating', sep=''),  
+         y = 'average rating' ) 
+  
+````
+
+The curve looks similar to the movies, but shows slightly less variability (looking at the bends and the very left/right values).
+
+
+\newpage
+
+## Movie year
+
+The first temporal variable we explore and visualize is the year a movie was released.
+
+
+````{r plot year movie vs avg rating, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "50%"}
+
+#____________________________________________________________________________
+    
+# * Data expolation: Movie year ------------------------------------------------
+#____________________________________________________________________________
+
+#____________________________________________________________________________
+    
+# ** P: year 1 -------------------------------------------------------------
+#____________________________________________________________________________
+
+# p1 Year: movie year vs. avg rating
+
+  edx %>% group_by(year) %>% 
+    summarize(avg_rating=mean(rating), n_ratings = n()) %>% 
+  ggplot(aes(year,avg_rating, size = n_ratings)) +
+  geom_smooth(col="orange") +
+  geom_point(col="steelblue", alpha=0.8) +
+  geom_hline(yintercept=mu, linetype='solid', col="firebrick1") +
+  geom_hline(yintercept=mu+sigma, linetype='dashed', col="firebrick")+
+  geom_hline(yintercept=mu-sigma, linetype='dashed', col="firebrick")+
+  annotate('text', label=paste("mu=",round(mu,4), sep=''), 
+           x=1950, y=mu*1.02 , col="firebrick1" ) +
+  ggtitle("avg rating vs movie year", 
+          subtitle = "incl. loess smooth") +
+  theme_hc() +
+  theme(legend.position = "none") +
+  labs(tag = "P: year 1" , caption="point size represents number of ratings")
+
+````
+
+Movies rated before the 90's get mostly ratings quite above the average whereas later the values are slightly below or around the average.
+
+````{r plot perc ratings per movie year, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "50%"}
+
+#____________________________________________________________________________
+    
+# ** P: year 2 -------------------------------------------------------------
+#____________________________________________________________________________
+
+
+# p2 Year: % of ratings per movie year 
+
+  edx %>% select(year) %>% 
+  ggplot(aes(x = year)) +
+  geom_histogram(aes(y = ..count../sum(..count..)), 
+                 binwidth = 10, col="blue", fill="lightblue") +
+  geom_vline(xintercept = median(edx$year),
+             linetype='dashed', col='firebrick') +
+  annotate('text', label='median', 
+           x=median(edx$year)*0.998, y=0.1 , col="firebrick", angle = 90 )+
+  ggtitle("% of ratings per movie year released") +
+  theme_hc() +
+  labs(tag = "P: year 2" , y="percentage", x="year (grouped by 10)") +
+  scale_y_continuous(labels = scales::percent_format())
+
+````
+
+There are no movies beyond 2009 as the movielens data-set was released in 1/2009.
+In the data-set we find only very few movies up the 80's.
+
+\newpage
+## Year of rating
+
+The year of rating indicates, derived from the timestamp, in which year a rating was given.
+Is there a trend towards higher or lower rating? Are ratings in certain years very extrem?
+
+```` {r  plot avg rating vs year of rating, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "50%"}
+
+#____________________________________________________________________________
+    
+# * Data expolation: Year of rating ----------------------------------------
+#____________________________________________________________________________
+
+
+#____________________________________________________________________________
+    
+# ** P: year.rating 1 ------------------------------------------------------
+#____________________________________________________________________________
+
+  # p1 year.rating: year.rating vs. avg rating
+  
+        edx %>% group_by(year.rating) %>% 
+          summarize(avg_rating=mean(rating), n_ratings = n()) %>% 
+        ggplot(aes(year.rating,avg_rating, size = n_ratings)) +
+        geom_smooth(col="orange") +
+        geom_point(col="steelblue", alpha=0.8) +
+        geom_hline(yintercept=mu, col="firebrick1") +
+        geom_hline(yintercept=mu+sigma, linetype='dashed', col="firebrick")+
+        geom_hline(yintercept=mu-sigma, linetype='dashed', col="firebrick")+
+        annotate('text', label=paste("mu=",round(mu,4), sep=''), 
+                 x=2005, y=mu*1.02 , col="firebrick1" ) +
+        ggtitle("avg.rating vs year of rating", 
+                subtitle = "incl. loess smooth") +
+        theme_hc() +
+        theme(legend.position = "none") +
+        labs(tag = "P: year.rating 1" ,
+             caption="point size represents number of ratings")
+
+````
+
+The year of rating is quite close and stable to mu. Hence not much variability, except the outlier in 1995.
+
+```` {r plot year of rating, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "50%"}
+
+#____________________________________________________________________________
+    
+# ** P: year.rating 2 ------------------------------------------------------
+#____________________________________________________________________________
+
+
+# p2 year.rating: % of ratings per year.rating
+  edx %>% select(year.rating) %>% 
+  ggplot(aes(x = year.rating)) +
+  geom_histogram(aes(y = ..count../sum(..count..)), binwidth = 1, 
+                 col="blue", fill="lightblue") +
+  geom_vline(xintercept = median(edx$year.rating),
+             linetype='dashed', col='firebrick') +
+  annotate('text', label='median', x=2001.5, y=0.1 , 
+           col="firebrick", angle = 90 )+
+  ggtitle("% of ratings per year") +
+  theme_hc() +
+  labs(tag="P: year.rating 2",y="percentage", x="year of rating") +
+  scale_y_continuous(labels = scales::percent_format())
+
+````
+
+Also the barplot reflects a low variability, despite some outliers.
+
+\newpage
+## Rating lag
+
+
+```` {r plot avg rating vs rating_lag, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "50%"}
+
+#____________________________________________________________________________
+    
+# * Data expolation: Rating lag --------------------------------------------
+#____________________________________________________________________________
+
+#____________________________________________________________________________
+    
+# ** P: rating lag 1 -------------------------------------------------------
+#____________________________________________________________________________
+
+# p1 plot avg rating vs rating_lag
+  edx %>% group_by(rating_lag) %>% 
+  summarize(avg_rating=mean(rating), n_ratings = n()) %>% 
+  ggplot(aes(rating_lag,avg_rating, size = n_ratings)) +
+  geom_smooth(col="orange") +
+  geom_point(col="steelblue", alpha=0.8) +
+  geom_hline(yintercept=mu, linetype='solid',col="firebrick1") +
+  geom_hline(yintercept=mu+sigma, linetype='dashed', col="firebrick")+
+  geom_hline(yintercept=mu-sigma, linetype='dashed', col="firebrick")+
+  annotate('text', label=paste("mu=",round(mu,4), sep=''), 
+           x=50, y=mu*1.02 , col="firebrick1" ) +
+  ggtitle("avg rating vs rating_lag", subtitle = "incl. loess smooth") +
+  theme_hc() +
+  theme(legend.position = "none") +
+  labs(tag = "P: rating lag 1", 
+       caption="point size represents number of ratings")
+
+````
+
+
+The rating lag shows some variability. It seems to be similar to the movie year, but 'mirrored'.
+
+```` {r plot perc of ratings per rating_lag, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "50%"}
+
+
+#____________________________________________________________________________
+    
+# ** P: rating lag 2 -------------------------------------------------------
+#____________________________________________________________________________
+
+
+# p2 plot perc of ratings per rating_lag
+edx %>% select(rating_lag) %>% 
+  ggplot(aes(x = rating_lag)) +
+  geom_histogram(aes(y = ..count../sum(..count..)), binwidth = 1, 
+                 col="blue", fill="lightblue") +
+  geom_vline(xintercept = median(edx$rating_lag),
+             linetype='dashed', col='firebrick') +
+  annotate('text', label='median', 
+           x=median(edx$rating_lag)*0.7, y=0.1 , 
+           col="firebrick", angle = 90 )+
+  ggtitle("% of ratings per rating_lag ") +
+  theme_hc() +
+  labs(tag = "P: rating lag 2", y="percentage", x="rating lag") +
+  scale_y_continuous(labels = scales::percent_format())
+
+````
+
+The most movies are rated 9 year after their release. 
+
+\newpage
+# Methods and analysis
+
+## Regularization
+
+Regularization allows for reduced errors caused by movies with extreme ratings and few reviews (i.e. number of ratings)
+
+The general idea is to add a penalty for extreme values with low occurrence in the data, in order to optimize the RMSE. 
+  
+With reference to table 'Movies with best ratings' and the comment afterwards: We give no evaluation on 'Hellhounds on My Trail' vs. 'Pulp Fiction', but consider the number of ratings as basis for the regularization in order to achieve the best overall RMSE.
+  
+Varying from the course (one lambda for all variables), the regularization will be first done by individual lambdas for each variable.  
+The idea is, to analyse if an individually optimized lambda for each variable leads to a  better overall performance.  
+For comparison, an optimized model with lambda 'one4all' will be generated. The comparison will be done only on the models with movie/user/genres effects.
+  
+## Variables to be used 
+
+Based on the data exploration, the following variables where be taken into account:
+
+- movie
+- user
+- genres
+- rating.lag
+- year
+
+In the final model only one temporal effect shall be used. Thus after the decision on the regularization mode, a RMSE-based decision will be taken for the better performing temporal effect.
+
+## Prediction model
+
+The method will follow the regression model approach of ['Introduction to Data Science', chapter 34.7](https://rafalab.github.io/dsbook/large-datasets.html#recommendation-systems) by Irizarry, R. (2022-07-07).
+
+Starting from a simple model based on mu, the model will be enhanced and optimized by combining several effects applying regularization. 
+Each model will be compared to the others by it's RMSE.
+ 
+The process towards the final prediction model is planned as  follows:
+
+1. Simple model with mu only
+1. Base + movie effect
+1. Base + movie effect regularized individually
+1. Base + movie + user effect regularized individually
+1. Base + movie + user + genre effect regularized individually
+1. Base + movie + user + genre effect regularized one-for-all
+1. Compare regularization individually versus one-for-all
+1. Base + movie + user + genre + rating lag effect (regularization based on comparison) 
+1. Base + movie + user + user/genre + year effect (regularization based on comparison) 
+1. Review results and decide on final model
+1. Final evaluation
+
+
+## Crossvalidation
+
+Crossvalidation is used throughout the models, even when no parameter optimization is required. This is in order to have just one process for all.
+The code is inspired by the material for ['HardvardX course PH525X Biomediacal Data Science'](http://genomicsclass.github.io/book/pages/crossvalidation.html), also held by our Professor Rafael Irizarry.  
+
+
+## System performance and memory
+
+Already when starting to download the data and preparing the edx/validation data-sets, I encountered 'out-of-memory'-issues in RStudioCloud. Thus I switched to my local RStudio installation (16GB RAM).
+
+Nevertheless once in a while r-functions might be performed within the code:
+
+- rm(): Can be applied if usefull, to (large) objects that are obsolete for the further processing or analysis. 
+- gc(): Stands for 'garbage collection' and cleans up unused objects (also 'invisible' ones) and thus free up memory.
+  
+As additional measure (if needed): Variables in edx not needed for the models, could be removed before starting modeling from edx.
+
+In order to keep track of runtimes within the model functions, for each iteration (CV, lambda) the runtime in seconds is stored in the result as 'duration'.
+
+
+\newpage
+
+# Building the prediction models
+
+## SETUP: Crossvalidation folds & RMSE function
+
+As a first step, the folds for the crossvalidation needs to be created, using the createFolds function from the caret package.
+Also the KPI-measuring function for the RMSE is defined.
+
+```` {r setup cv, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide" }
+
+#____________________________________________________________________________
+    
+# * Building the prediction models -----------------------------------------
+#____________________________________________________________________________
+
+#____________________________________________________________________________
+    
+# ** setup cv  & define RMSE -----------------------------------------------
+#____________________________________________________________________________
+
+
+# set.seed in order to create reproducible results. 
+  set.seed(123, sample.kind="Rounding")
+  
+# Create 5  folds for use in crossvalidation from edx (createFolds from caret)
+  folds <- createFolds(as.numeric(rownames(edx)), k = 5) 
+  
+# RMSE function   
+  RMSE <- function(true_ratings, predicted_ratings){
+    sqrt(mean((true_ratings - predicted_ratings)^2))}
+
+````
+
+
+\newpage   
+##  M1 Base model: Just the average (mu only)
+
+Our simplest model is just to predict the overall average of the rating.
+
+In the code we call the model function, split into train & test sets according to the 5 folds , calculate the prediction and finally the RMSE.
+
+The called function gives back a dataframe, containing the results for each CV fold (and in later models also the parameters (lambda) to be optimized).
+
+Based to the results from the function, a data-frame 'results' will be created. 
+It contains a summary for the model, will be enhanced for all further models and is the basis for the performance evaluation.  
+
+Content of results:
+
+* Method: Refers to the model and its variables (reg. ~ regularization, )   
+* RMSE: The RMSE for this model   
+* reference is some information e.g. about C.V. and the data used (e.g. edx)    
+* lambda contains the optimized lambda's for the model  (if available)  
+* duration is the summed up runtime for the model in seconds   (if needed)  
+  
+  
+```` {r m1 just the average, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide" }
+
+#____________________________________________________________________________
+
+# ** m1 Base model: just the average ---------------------------------------
+#____________________________________________________________________________
+
+## model function   
+  m1.simply.mu <- function (x) {
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    start <- as.numeric(Sys.time())
+    
+    train <- edx[-folds[[x]],]    #define train set
+    test <-  edx[folds[[x]],]     #define test set    
+    mu_hat <- mean(train$rating)  #mu_hat as prediction as avg. of all ratings
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    rmse <- RMSE(test$rating, mu_hat)   # calculate rmse
+    end <- as.numeric(Sys.time())
+    runtime <- round(end-start)
+    
+    result <- data.frame(method="simply.mu", 
+                         fold=x, 
+                         rmse=rmse, 
+                         lambda='na', 
+                         duration=runtime )  #store result in a data.frame
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  }
+  
+## call model function  
+  # apply for folds 1:5 the function 'simply_mu'
+  result.m1.average <- map_df(1:5, m1.simply.mu) 
+
+## save model result to overall results dataframe
+  results <- data.frame(Method="m1 simply the average", 
+                RMSE=mean(result.m1.average$rmse), 
+                reference = "edx CV 5f", 
+                lambda = 'na',
+                duration = sum(result.m1.average$duration))  
+
+````
+
+The result of our first model:
+
+```` {r m1 review , message=FALSE, warning=FALSE,  echo=FALSE}
+
+## present overall results
+  results %>% kable()  
+    
+````
+
+\newpage
+## M2 Base + movie effect
+
+Now we add the movie effect. The effect indicates, how much the rating for a certain movie differs from the overall average. This bias we assign to the variable 'b.m'.
+
+This scheme applies also to all further models with more effects resulting in more 'b's'.
+ 
+```` {r m2 base m effect, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide"  }
+ 
+#____________________________________________________________________________
+
+# ** m2 Movie effect -------------------------------------------------------
+#____________________________________________________________________________
+
+## model function
+  m2.movie.effect <- function (x) {
+
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+    start <- as.numeric(Sys.time())
+
+    train <- edx[-folds[[x]],]
+    test <-  edx[folds[[x]],]
+
+    test <- test %>%
+      semi_join(train, by = 'movieId')
+
+    mu <-mean ( train$rating )
+
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+    b.movie <- train %>%
+      group_by(movieId) %>%
+      summarize(b.m = mean ( rating - mu))  # bias b.m for movie
+
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+    predicted <-
+      mu + test %>%
+      left_join(b.movie, by='movieId') %>%
+      pull(b.m)
+
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+    rmse <- RMSE (test$rating, predicted)
+    end <- as.numeric(Sys.time())
+    runtime <- round(end-start)
+
+    #result.movie.effect
+    result <- data.frame(method="movie.effect",
+                         fold=x,
+                         rmse=rmse,
+                         duration = runtime )
+
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  }
+
+## call model function
+  result.m2.movie.effect <- map_df(1:5, m2.movie.effect)
+ 
+## save model result to overall results dataframe
+  duration.tmp = sum(result.m2.movie.effect$duration)  
+  results <- rbind(results, data.frame(Method="m2 movie effect",
+                               RMSE=mean(result.m2.movie.effect$rmse),
+                               reference = "edx CV 5f",
+                               lambda = 'na',
+                               duration=duration.tmp))
+  
+````
+
+The M2 result is a good improvement: 
+
+```` {r m2 review , message=FALSE, warning=FALSE,  echo=FALSE}
+
+  ## present overall results
+  results %>% kable()  
+    
+````
+
+
+\newpage   
+## SETUP: Parameters for CV folds and lambda
+
+With the next model we start regularization. In order to get the optimized lambda, we need to simulate with a range of lambda (we use 0:10). 
+Based on the lowest RMSE we select the optimized lambda.
+
+The following code creates a dataframe with all combinations (via 'expand.grid') of the lambdas and folds for the use in the model function.
+
+```` {r setup params, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide" }
+
+#____________________________________________________________________________
+  
+# ** Setup parameters for crossvalidation and optimizing lambda ------------
+#____________________________________________________________________________
+
+# With regularization we need a range of lambda values 
+  #in order to find the lambda resulting in the lowest rmse 
+  
+  #create parameters for folds and lambdas
+  params <- expand.grid(1:5, seq(0,10,1)) 
+  names(params) <- c("fold","lambda")
+
+
+````
+
+\newpage   
+## M3.1 Base + movie effect regularized individually
+
+For the following regularized mode, we need to hand over to two parameters to our function: cv folds & lambdas.
+We use a mapping function, that can handle to parameters and returns a dataframe: map2_dfr.
+
+```` {r m31 base m effect regularized, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide"  }
+
+#____________________________________________________________________________
+  
+# ** m3.1 Movie effect regularized -----------------------------------------
+#____________________________________________________________________________
+
+# model function
+  m31.movie.effect.reg <- function (x,l) {
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  
+    start <- as.numeric(Sys.time()) 
+    
+    train <- edx[-folds[[x]],]
+    test <-  edx[folds[[x]],]  
+    
+    test <- test %>% 
+      semi_join(train, by = 'movieId')
+    
+    mu <-mean ( train$rating )  
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.movie <- train %>% 
+      group_by(movieId) %>% 
+      summarize(s.m = sum ( rating - mu), n.m =n())  %>% 
+      mutate ( b.m = s.m/(n.m + l))   # l  = lambda from params
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    predicted <-
+      test %>% 
+      left_join( b.movie, by='movieId') %>% 
+      mutate (pred = mu + b.m) %>% 
+      pull(pred)
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    rmse <- RMSE (test$rating, predicted)
+    end <- as.numeric(Sys.time())
+    runtime <- round(end-start)
+    
+    #result.movie.effect
+    result <- data.frame(method="movie.effect.reg", 
+                         fold=x, lambda= l, 
+                         rmse=rmse, 
+                         duration = runtime  ) 
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  }
+
+## call model function 
+  # we handover 2 parameters (fold&lambda) to the function, so we use map2_dfr
+  result.m31.movie.effect.reg <- 
+    map2_dfr(params$fold, params$lambda, m31.movie.effect.reg)  
+
+# calculate the optimized lambda
+  lambda.m <- result.m31.movie.effect.reg %>% 
+    group_by(lambda) %>%
+    summarize(rmse=mean(rmse))%>% 
+    filter(rmse==min(rmse)) %>% .$lambda
+  
+## calculate optimized rmse
+  rmse.result.m31.movie.effect.reg <- result.m31.movie.effect.reg %>%
+    group_by(lambda) %>% summarize(rmse=mean(rmse)) %>%
+    filter(rmse==min(rmse)) %>% .$rmse
+ 
+## save model result to overall results dataframe  
+  duration.tmp = sum(result.m31.movie.effect.reg$duration)  
+  results <- rbind(results, data.frame(Method="m3.1 movie effect reg.", 
+                               RMSE=rmse.result.m31.movie.effect.reg, 
+                               reference= "edx CV 5f", 
+                               lambda=lambda.m,
+                               duration=duration.tmp))
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>   
+  
+````
+
+The result dataframe for M3.1 contains the RMSE per fold and lambda. Here we see only the first 7 rows:
+
+```` {r m31 model results , message=FALSE, warning=FALSE,  echo=FALSE}
+
+## quick view on the resulting data.frame
+  result.m31.movie.effect.reg %>% head(7) %>% kable()
+    
+````
+
+In the plot we see the RMSE over lambda for the different CV folds:
+
+```` {r plot m31 lambda, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "60"}
+
+# quick visualitions of the lambda's 
+result.m31.movie.effect.reg %>%   
+  ggplot(aes(lambda, rmse, col=fold)) +
+  geom_point() +
+  geom_vline(xintercept = lambda.m, col="firebrick1") +
+  ggtitle('result.m31.movie.effect.reg', 
+          subtitle = '>> red line = optimized lambda <<') +
+  theme_hc()
+
+````
+
+We observe only a small improvement on the RMSE: 
+
+```` {r m31 review , message=FALSE, warning=FALSE,  echo=FALSE}
+
+## present overall results
+  results %>% kable()  
+
+
+````
+
+
+### Investigating the regualization impact
+
+
+
+In order to see the regularization impact, let's compare 'Hellhounds on My Trail (1999)/movieId 3226 ' versus 'Pulp Fiction (1994)/movieId 296'.
+  
+In the model function we created a data.frame 'b.movie' for each training set per cv fold. 
+For the investigation on the regularization impact, we create it on edx and include the prediction we would have done on edx. Off course, prediction wise not really correct, but it illustrates what we aim to investigate.
+
+FYI with reference to the table: mu = `r mu`, lambda movie = `r lambda.m`.
+
+```` {r investigate ,  message=FALSE, warning=FALSE,  echo=FALSE} 
+
+#____________________________________________________________________________
+  
+# *** Investigation regularization impact ----------------------------------
+#____________________________________________________________________________
+  
+# Data frame with bias for movies
+  b.movie <- edx %>% 
+    group_by(title, movieId) %>% 
+    summarize(s.m = sum ( rating - mu),        # sum of each 'rating - mu' 
+              n.m =n(),                        # number of ratings
+              mu.m = mean(rating))  %>%        # prediction as in Model M2
+    mutate ( b.m.unreg = s.m/(n.m),            # unregularized bias
+             b.m.reg = s.m/(n.m + lambda.m),   # regularized bias
+             pred.m.unreg = mu+b.m.unreg,      # unregularized prediction
+             pred.m.reg = mu+b.m.reg)          # regularized prediction
+  
+# Data frame only comparison movies
+  comp.movie.bs <- b.movie %>% filter(movieId %in% c(3226, 296))  %>% 
+    select(-movieId, -s.m)
+
+  
+# Review table  
+  kable(comp.movie.bs, caption = "Investigate regularization", digits=5)
+  
+  
+```` 
+ 
+'mu.m' reflects the prediction we would have given with the unregularized Model M2 and equals 'pred.m.unreg'.  
+'b.m.unreg' is the bias considering the movie effect and equals the difference between the average rating for the movie (mu.m) and 'mu' (average of all ratings).  
+'b.m.reg' is the penalized bias considering the movie effect and lambda.  
+'pre.m.unreg' & 'pre.m.reg' are predictions considering the movie effect unregularized & regularized respectively.  
+  
+  
+Thus 'Hellhounds on My Trail'`s unregularized prediction equals the only one rating given, whereas the regularized prediction is penalized down, even below 'Pulp Fiction'.  
+Nevertheless, this penalty improves the RMSE and thus the overall prediction performance.  
+
+With the many ratings given for 'Pulp Fiction', the difference (penalty) between the regularized and unregularized prediction is only marginal.
+
+
+
+\newpage   
+
+## M3.2 Base + movie + user effect regularized individually
+
+For the user effect we create an individual user-lambda.
+```` {r m32 base mu effect regularized, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide"  }
+
+#____________________________________________________________________________
+  
+# ** m3.2 Movie+User effect regularized-------------------------------------
+#____________________________________________________________________________
+  
+## model function    
+m32.movie.user.effect.reg <- function (x,l) {
+  
+  # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  
+  
+  start <- as.numeric(Sys.time())       
+  
+  train <- edx[-folds[[x]],]
+  test <-  edx[folds[[x]],]  
+  
+  test <- test %>% 
+    semi_join(train, by = 'movieId') %>% 
+    semi_join(train, by = 'userId')
+  
+  mu <-mean ( train$rating )  
+  
+  # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  
+  b.movie <- train %>% 
+    group_by(movieId) %>% 
+    summarize(s.m = sum ( rating - mu), n.m =n())  %>% 
+    mutate ( b.m = s.m/(n.m + lambda.m))  # opt.lambda movie-effect
+  
+  # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  
+  b.user <- train %>% 
+    left_join(b.movie, by='movieId') %>% 
+    group_by(userId) %>% 
+    summarize(s.u = sum ( rating - mu - b.m), n.u =n()) %>% 
+    mutate ( b.u = s.u/(n.u + l))   # l  = lambda from params
+  
+  # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  
+  predicted <-
+    test %>% 
+    left_join(b.movie, by='movieId') %>% 
+    left_join(b.user, by='userId') %>% 
+    mutate (pred = mu + b.m + b.u) %>% 
+    pull(pred)
+  
+  # >>>>>>>>>>>>>>>>>>>>>>>>>>>> 
+  
+  rmse <- RMSE (test$rating, predicted)
+  end <- as.numeric(Sys.time())
+  runtime <- round(end-start)
+  
+  #result.movie.effect
+  result <- data.frame(method="user.effect.reg", 
+                       fold=x, 
+                       lambda=l, 
+                       rmse=rmse, 
+                       duration=runtime )  
+  
+  # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+}
+
+## call model function     
+    result.m32.movie.user.effect.reg <- 
+      map2_dfr(params$fold, params$lambda, m32.movie.user.effect.reg)
+
+# calculate the optimized lambda    
+    lambda.u <- result.m32.movie.user.effect.reg %>% 
+      group_by(lambda) %>% 
+      summarize(rmse=mean(rmse))  %>% 
+      filter(rmse==min(rmse)) %>% .$lambda
+
+## calculate optimized rmse
+  rmse.result.m32.movie.user.effect.reg <- 
+    result.m32.movie.user.effect.reg %>% 
+      group_by(lambda) %>% summarize(rmse=mean(rmse))  %>% 
+      filter(rmse==min(rmse)) %>% .$rmse
+
+## save model result to overall results dataframe   
+  duration.tmp = sum(result.m32.movie.user.effect.reg$duration)  
+  results <- rbind(results, data.frame(Method="m3.2 movie+user effect reg.", 
+                               RMSE=rmse.result.m32.movie.user.effect.reg, 
+                               reference = "edx CV 5f", 
+                               lambda=paste('l.m=',lambda.m,'/','l.u=',
+                                    lambda.u, sep=''),
+                               duration=duration.tmp))
+   
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>  
+
+````
+
+Plot RMSE versus lambda by CV folds:
+
+```` {r plot m32 lambda, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "60"}
+
+# quick visualitions of the lambda's 
+    result.m32.movie.user.effect.reg %>%   
+      ggplot(aes(lambda, rmse, col=fold)) +
+      geom_point() +
+      geom_vline(xintercept = lambda.u, col="firebrick1") +
+      ggtitle('result.m32.movie.user.effect.reg', 
+              subtitle = '>> red line = optimized lambda <<') +
+      theme_hc()  
+
+````
+
+The RMSE decreased significantly by the user-effect, but the runtime increased:
+```` {r m32 review , message=FALSE, warning=FALSE,  echo=FALSE}
+
+  ## present overall results
+  results %>% kable()  
+    
+````
+
+\newpage   
+## M3.3 Base + movie + user + genre effect regularized individually
+
+We enhance the model by the genres effect and create an individual genre-lambda.
+
+```` {r m33 base mug effect regularized, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide"  }
+
+#____________________________________________________________________________
+    
+# ** m3.3 Movie+User+Genres effect regularized -----------------------------
+#____________________________________________________________________________
+ 
+## model function    
+    m33.movie.user.genre.effect.reg <- function (x,l) {
+      
+      # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+      
+      start <- as.numeric(Sys.time())
+      
+      train <- edx[-folds[[x]],]
+      test <-  edx[folds[[x]],]  
+      
+      test <- test %>% 
+        semi_join(train, by = 'movieId') %>% 
+        semi_join(train, by = 'userId')
+      
+      mu <-mean ( train$rating )  
+      
+      # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+      
+      b.movie <- train %>% 
+        group_by(movieId) %>% 
+        summarize(s.m = sum ( rating - mu), n.m =n())  %>% 
+        mutate ( b.m = s.m/(n.m + lambda.m))   #  opt. lambda movie-effect
+      
+      # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+      
+      b.user <- train %>% 
+        left_join(b.movie, by='movieId') %>% 
+        group_by(userId) %>% 
+        summarize(s.u = sum ( rating - mu - b.m), n.u =n()) %>% 
+        mutate ( b.u = s.u/(n.u + lambda.u))   # opt, lambda  user-effect
+      
+       # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+      
+      b.genre <- train %>% 
+        left_join(b.movie, by='movieId') %>% 
+        left_join(b.user, by='userId') %>%  
+        group_by(genres) %>% 
+        summarize(s.g = sum ( rating - mu - b.m - b.u ), n.g = n()) %>% 
+        mutate ( b.g = s.g/(n.g + l))   # l  = lambda from params
+      
+      # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+      
+      predicted <-
+        test %>% 
+        left_join(b.movie, by='movieId') %>% 
+        left_join(b.user, by='userId') %>% 
+        left_join(b.genre, by='genres') %>% 
+        mutate (pred = mu + b.m + b.u + b.g) %>% 
+        pull(pred)
+      
+      # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+      rmse <- RMSE (test$rating, predicted)
+      end <- as.numeric(Sys.time())
+      runtime <- round(end-start)
+      
+      #result.movie.effect
+      result <- data.frame(method="movie+user+genre.effect.reg", 
+                           fold=x, 
+                           lambda= l, 
+                           rmse=rmse, 
+                           duration=runtime )  
+      
+      # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    }
+    
+## call model function    
+    result.m33.movie.user.genre.effect.reg <- 
+      map2_dfr(params$fold, params$lambda, m33.movie.user.genre.effect.reg)
+
+# calculate the optimized lambda
+    lambda.g <- result.m33.movie.user.genre.effect.reg %>% 
+      group_by(lambda) %>% 
+      summarize(rmse=mean(rmse))%>% 
+      filter(rmse==min(rmse)) %>% .$lambda
+
+## calculate optimized rmse    
+    rmse.result.m33.movie.user.genre.effect.reg <- 
+      result.m33.movie.user.genre.effect.reg %>% 
+      group_by(lambda) %>% summarize(rmse=mean(rmse)) %>% 
+      filter(rmse==min(rmse)) %>% .$rmse
+    
+## save model result to overall results dataframe   
+  duration.tmp = sum(result.m33.movie.user.genre.effect.reg$duration)  
+  results <- rbind(results, data.frame(
+                               Method="m3.3 movie+user+genre effect reg.", 
+                               RMSE=rmse.result.m33.movie.user.genre.effect.reg, 
+                               reference = "edx CV 5f", 
+                               lambda=
+                                 paste('l.m=',lambda.m,'/','l.u=',
+                                    lambda.u,'/','l.g=',lambda.g, sep=''),
+                               duration=duration.tmp))
+    
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>     
+
+````
+
+
+Plot RMSE versus lambda by CV folds:
+
+```` {r plot m33 lambda, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "60"}
+
+# quick view on the results
+    result.m33.movie.user.genre.effect.reg  %>%   
+    ggplot(aes(lambda, rmse, col=fold)) +
+      geom_point() +
+      geom_vline(xintercept = lambda.g, col="firebrick1") +
+      ggtitle('result.m33.movie.user.genre.effect.reg', 
+              subtitle = '>> red line = optimized lambda <<') +
+      theme_hc()   
+
+````
+
+
+
+We observe only little reduction of the RMSE with the genre effect, but an further increase in runtime:
+```` {r m33 review , message=FALSE, warning=FALSE,  echo=FALSE}
+
+  ## present overall results
+  results %>% kable()  
+    
+````
+
+\newpage   
+## M4.1 Base + movie + user + genre effect regularized one-for-all
+
+With the next model we keep the effects, but switch to one lambda for all effects, as applied also in course.
+Thus we will see if the idea of indiviual lambdas pays off.
+```` {r m41 base mug effect regularized one4all, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide"  }
+
+#____________________________________________________________________________
+    
+# ** m4.1 Movie+User+Genres effect regularized one-for-all --------------------
+#____________________________________________________________________________
+    
+## model function    
+  m41.movie.user.genre.effect.one4all <- function (x,l) {
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    start <- as.numeric(Sys.time())
+    
+    train <- edx[-folds[[x]],]
+    test <-  edx[folds[[x]],]  
+    
+    test <- test %>% 
+      semi_join(train, by = 'movieId') %>% 
+      semi_join(train, by = 'userId')
+    
+    mu <-mean ( train$rating )  
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.movie <- train %>% 
+      group_by(movieId) %>% 
+      summarize(s.m = sum ( rating - mu), n.m =n())  %>% 
+      mutate ( b.m = s.m/(n.m + l))   #  l lambda l
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.user <- train %>% 
+      left_join(b.movie, by='movieId') %>% 
+      group_by(userId) %>% 
+      summarize(s.u = sum ( rating - mu - b.m), n.u =n()) %>% 
+      mutate ( b.u = s.u/(n.u + l))   # l lambda l
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.genre <- train %>% 
+      left_join(b.movie, by='movieId') %>% 
+      left_join(b.user, by='userId') %>%  
+      group_by(genres) %>% 
+      summarize(s.g = sum ( rating - mu - b.m - b.u ), n.g = n()) %>% 
+      mutate ( b.g = s.g/(n.g + l))   # lambda
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    predicted <-
+      test %>% 
+      left_join(b.movie, by='movieId') %>% 
+      left_join(b.user, by='userId') %>% 
+      left_join(b.genre, by='genres') %>% 
+      mutate (pred = mu + b.m + b.u + b.g) %>% 
+      pull(pred)
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    rmse <- RMSE (test$rating, predicted)
+    end <- as.numeric(Sys.time())
+    runtime <- round(end-start)
+    
+    #result.movie.effect
+    result <- data.frame(method="movie+user+genre.effect.reg", 
+                         fold=x, 
+                         lambda= l, 
+                         rmse=rmse, duration=runtime )  
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  }
+
+## call model function    
+result.m41.movie.user.genre.effect.one4all <- 
+  map2_dfr(params$fold, params$lambda, m41.movie.user.genre.effect.one4all)
+
+# calculate the optimized lambda
+  lambda.mug <- result.m41.movie.user.genre.effect.one4all %>% 
+    group_by(lambda) %>% summarize(rmse=mean(rmse))  %>% 
+    filter(rmse==min(rmse)) %>% .$lambda
+
+## calculate optimized rmse    
+  rmse.result.m41.movie.user.genre.effect.one4all <- 
+    result.m41.movie.user.genre.effect.one4all %>% 
+    group_by(lambda) %>% summarize(rmse=mean(rmse))  %>% 
+    filter(rmse==min(rmse)) %>% .$rmse
+
+## save model result to overall results dataframe   
+  duration.tmp = sum(result.m41.movie.user.genre.effect.one4all$duration)  
+  results <- rbind(results, data.frame(
+                        Method="m4.1 movie+user+genre.effect reg. one4all", 
+                        RMSE=rmse.result.m41.movie.user.genre.effect.one4all, 
+                        reference = "edx CV 5f", 
+                        lambda=lambda.mug,
+                        duration=duration.tmp))
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>       
+
+````
+
+
+Plot RMSE versus lambda by CV folds:
+
+```` {r plot m41 lambda, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "60"}
+
+# quick view on the results
+    result.m41.movie.user.genre.effect.one4all  %>%   
+    ggplot(aes(lambda, rmse, col=fold)) +
+      geom_point() +
+      geom_vline(xintercept = lambda.mug, col="firebrick1") +
+      ggtitle('result.m41.movie.user.genre.effect.one4all', 
+              subtitle = '>> red line = optimized lambda <<') +
+      theme_hc()   
+
+````
+
+The results with 'one4all' lambda:
+```` {r m41 review , message=FALSE, warning=FALSE,  echo=FALSE}
+
+  ## present overall results
+  results %>% kable()  
+    
+````
+
+ 
+## REVIEW: Regularization individually versus one-for-all
+
+The individual lambdas do not pay off, although the difference to one-4-all is modest.
+
+The decision based on this result: Continue with one-for-all lambda for the next two models with the temporal effect.
+
+\newpage   
+## M5.1 Base + movie + user + user + lag effect regularized one-for-all
+
+The next model includes the first temporal effect: rating lag.
+
+```` {r m51 base mugl effect regularized one4all, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide"  }
+
+#____________________________________________________________________________
+
+# ** m5.1 Movie+User+Genres+lag effect regularized one-for-all -------------
+#____________________________________________________________________________
+
+## model function    
+  m51.movie.user.genre.effect.lag.one4all <- function (x,l) {
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    start <- as.numeric(Sys.time())
+    
+    train <- edx[-folds[[x]],]
+    test <-  edx[folds[[x]],]  
+    
+    test <- test %>% 
+      semi_join(train, by = 'movieId') %>% 
+      semi_join(train, by = 'userId')
+    
+    mu <-mean ( train$rating )  
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.movie <- train %>% 
+      group_by(movieId) %>% 
+      summarize(s.m = sum ( rating - mu), n.m =n())  %>% 
+      mutate ( b.m = s.m/(n.m + l))   #  l=lambda 
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.user <- train %>% 
+      left_join(b.movie, by='movieId') %>% 
+      group_by(userId) %>% 
+      summarize(s.u = sum ( rating - mu - b.m), n.u =n()) %>% 
+      mutate ( b.u = s.u/(n.u + l))   #  l=lambda 
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.genre <- train %>% 
+      left_join(b.movie, by='movieId') %>% 
+      left_join(b.user, by='userId') %>%  
+      group_by(genres) %>% 
+      summarize(s.g = sum ( rating - mu - b.m - b.u ), n.g = n()) %>% 
+      mutate ( b.g = s.g/(n.g + l))   # l=lambda 
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.lag <- train %>% 
+      left_join(b.movie, by='movieId') %>% 
+      left_join(b.user, by='userId') %>% 
+      left_join(b.genre, by='genres') %>% 
+      group_by(rating_lag) %>% 
+      summarize(s.l = sum ( rating - mu - b.m - b.u - b.g), n.l = n()) %>% 
+      mutate(b.l = s.l/(n.l + l))     # l=lambda 
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    predicted <-
+      test %>% 
+      left_join(b.movie, by='movieId') %>% 
+      left_join(b.user, by='userId') %>% 
+      left_join(b.genre, by='genres') %>% 
+      left_join(b.lag, by='rating_lag') %>% 
+      mutate (pred = mu + b.m + b.u + b.g + b.l) %>% 
+      pull(pred)
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    rmse <- RMSE (test$rating, predicted)
+    end <- as.numeric(Sys.time())
+    runtime <- round(end-start)
+    
+    #result.movie.effect
+    result <- data.frame(method="movie+user+genre+lag.effect.one4all", 
+                         fold=x, 
+                         lambda= l, 
+                         rmse=rmse, 
+                         duration=runtime )  
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  }
+  
+## call model function    
+  result.m51.movie.user.genre.effect.lag.one4all <- 
+    map2_dfr(params$fold, params$lambda, 
+             m51.movie.user.genre.effect.lag.one4all)
+  
+# calculate the optimized lambda
+  lambda.mugl <- result.m51.movie.user.genre.effect.lag.one4all %>% 
+    group_by(lambda) %>% summarize(rmse=mean(rmse))  %>% 
+    filter(rmse==min(rmse)) %>% .$lambda
+
+## calculate optimized rmse    
+  rmse.result.m51.movie.user.genre.effect.lag.one4all <- 
+    result.m51.movie.user.genre.effect.lag.one4all %>% 
+    group_by(lambda) %>% summarize(rmse=mean(rmse))  %>% 
+    filter(rmse==min(rmse)) %>% .$rmse
+
+## save model result to overall results dataframe   
+  duration.tmp = sum(result.m51.movie.user.genre.effect.lag.one4all$duration)  
+  results <- rbind(results, data.frame(
+                    Method="m5.1 movie+user+genre+lag effect reg. one4all", 
+                    RMSE=rmse.result.m51.movie.user.genre.effect.lag.one4all, 
+                    reference = "edx CV 5f", 
+                    lambda=lambda.mugl,
+                    duration=duration.tmp))
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>  
+
+````
+
+Plot RMSE versus lambda by CV folds:
+
+```` {r plot m51 lambda, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "60"}
+
+# quick view on the results
+  result.m51.movie.user.genre.effect.lag.one4all  %>%   
+  ggplot(aes(lambda, rmse, col=fold)) +
+    geom_point() +
+    geom_vline(xintercept = lambda.mugl, col="firebrick1") +
+    ggtitle('result.m51.movie.user.genre.effect.lag.one4all', 
+            subtitle = '>> red line = optimized lambda <<') +
+    theme_hc()    
+
+````
+
+\newpage
+
+The improvement by the first temporal effect is moderate:
+```` {r m51 review , message=FALSE, warning=FALSE,  echo=FALSE}
+
+  ## present overall results
+  results %>% kable()  
+    
+````
+
+\newpage   
+## M5.2 Base + movie + user + user + year effect regularized one-for-all
+
+The model with year as temporal effect.
+```` {r m52 base mugy effect regularized one4all, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide"  }
+
+#____________________________________________________________________________
+  
+# ** m5.2 Movie+User+Genres+year effect regularized one4all ----------------
+#____________________________________________________________________________
+  
+## model function    
+  m52.movie.user.genre.effect.year.one4all <- function (x,l) {
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    start <- as.numeric(Sys.time())
+    
+    train <- edx[-folds[[x]],]
+    test <-  edx[folds[[x]],]  
+    
+    test <- test %>% 
+      semi_join(train, by = 'movieId') %>% 
+      semi_join(train, by = 'userId')
+    
+    mu <-mean ( train$rating )  
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.movie <- train %>% 
+      group_by(movieId) %>% 
+      summarize(s.m = sum ( rating - mu), n.m =n())  %>% 
+      mutate ( b.m = s.m/(n.m + l))   #  l=lambda 
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.user <- train %>% 
+      left_join(b.movie, by='movieId') %>% 
+      group_by(userId) %>% 
+      summarize(s.u = sum ( rating - mu - b.m), n.u =n()) %>% 
+      mutate ( b.u = s.u/(n.u + l))   #  l=lambda 
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.genre <- train %>% 
+      left_join(b.movie, by='movieId') %>% 
+      left_join(b.user, by='userId') %>%  
+      group_by(genres) %>% 
+      summarize(s.g = sum ( rating - mu - b.m - b.u ), n.g = n()) %>% 
+      mutate ( b.g = s.g/(n.g + l))   # l=lambda 
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    b.year <- train %>% 
+      left_join(b.movie, by='movieId') %>% 
+      left_join(b.user, by='userId') %>%  
+      left_join(b.genre, by='genres') %>%  
+      group_by(year) %>% 
+      summarize(s.y = sum ( rating - mu - b.m - b.u - b.g), n.y = n()) %>% 
+      mutate ( b.y = s.y/(n.y + l))   # l=lambda
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    
+    predicted <-
+      test %>% 
+      left_join(b.movie, by='movieId') %>% 
+      left_join(b.user, by='userId') %>% 
+      left_join(b.genre, by='genres') %>% 
+      left_join(b.year, by='year') %>% 
+      mutate (pred = mu + b.m + b.u + b.g + b.y) %>% 
+      pull(pred)
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    rmse <- RMSE (test$rating, predicted)
+    end <- as.numeric(Sys.time())
+    runtime <- round(end-start)
+    
+    #result.movie.effect
+    result <- data.frame(method="movie+user+genre+year.effect.one4all", 
+                         fold=x, 
+                         lambda= l, 
+                         rmse=rmse, 
+                         duration=runtime )  
+    
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  }
+  
+## call model function    
+  result.m52.movie.user.genre.effect.year.one4all <- 
+    map2_dfr(params$fold, params$lambda, 
+             m52.movie.user.genre.effect.year.one4all)
+  
+# calculate the optimized lambda
+  lambda.mugy <- result.m52.movie.user.genre.effect.year.one4all %>% 
+    group_by(lambda) %>% summarize(rmse=mean(rmse))  %>% 
+    filter(rmse==min(rmse)) %>% .$lambda
+ 
+## calculate optimized rmse    
+  rmse.result.m52.movie.user.genre.effect.year.one4all <- 
+    result.m52.movie.user.genre.effect.year.one4all %>% 
+    group_by(lambda) %>% summarize(rmse=mean(rmse))  %>% 
+    filter(rmse==min(rmse)) %>% .$rmse
+
+## save model result to overall results dataframe   
+  duration.tmp = sum(result.m52.movie.user.genre.effect.year.one4all$duration)  
+  results <- rbind(results, data.frame(
+                  Method="m5.2 movie+user+genre+year effect reg. one4all", 
+                  RMSE=rmse.result.m52.movie.user.genre.effect.year.one4all, 
+                  reference = "edx CV 5f", 
+                  lambda=lambda.mugy,
+                  duration=duration.tmp))
+  
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>  
+
+gc()
+  
+````
+
+
+Plot RMSE versus lambda by CV folds:
+
+```` {r plot m52 lambda, echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', out.width = "60%", out.heights = "60"}
+
+# quick view on the results
+  result.m52.movie.user.genre.effect.year.one4all  %>%   
+  ggplot(aes(lambda, rmse, col=fold)) +
+    geom_point() +
+    geom_vline(xintercept = lambda.mugy  , col="firebrick1") +
+    ggtitle('result.m52.movie.user.genre.effect.year.one4all', 
+            subtitle = '>> red line = optimized lambda <<') +
+    theme_hc()     
+
+````
+
+\newpage
+ 
+The decision on the final model will be based on this results: 
+```` {r m52 review , message=FALSE, warning=FALSE,  echo=FALSE}
+
+## present overall results
+  results %>% kable()  
+    
+````
+
+## REVIEW: Decide on final model
+
+The temporal effects add some improvement on the RMSE, thus we keep the better one for the final model.  
+In case of overfitting, they might have caused even an increased RMSE and hence we would not have included them at all to the final model.
+
+Decision: Rating lag shows the lower RMSE, hence M5.1 is the base for the final model applied for validation.
+
+\newpage 
+
+# Final evaluation
+
+## M6 Final model based on M5.1
+
+For the final model we create the 'b`s' using the optimized lambda from model M5.1.
+
+```` {r m6 final model, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide" }
+
+#____________________________________________________________________________  
+    
+# * Final evaluation--------------------------------------------------------
+
+#____________________________________________________________________________
+
+
+#____________________________________________________________________________  
+    
+# ** M6 Final Model --------------------------------------------------------
+
+#____________________________________________________________________________
+
+# lambda for final model
+  lambda.opt <- lambda.mugl 
+  
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  
+  edx <- edx %>% 
+    semi_join(edx, by = 'movieId') %>% 
+    semi_join(edx, by = 'userId')
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  
+  b.movie.f <- edx %>% 
+    group_by(movieId) %>% 
+    summarize(s.m = sum ( rating - mu), n.m =n())  %>% 
+    mutate ( b.m = s.m/(n.m + lambda.opt)) 
+  
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  
+  b.user.f <- edx %>% 
+    left_join(b.movie.f, by='movieId') %>% 
+    group_by(userId) %>% 
+    summarize(s.u = sum ( rating - mu - b.m), n.u =n()) %>% 
+    mutate ( b.u = s.u/(n.u + lambda.opt))   
+  
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+  b.genre.f <- edx %>% 
+    left_join(b.movie.f, by='movieId') %>% 
+    left_join(b.user.f, by='userId') %>%  
+    group_by(genres) %>% 
+    summarize(s.g = sum ( rating - mu - b.m - b.u ), n.g = n()) %>% 
+    mutate ( b.g = s.g/(n.g + lambda.opt)) 
+  
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  
+    b.lag.f <- edx %>% 
+    left_join(b.movie.f, by='movieId') %>% 
+    left_join(b.user.f, by='userId') %>% 
+    left_join(b.genre.f, by='genres') %>% 
+    group_by(rating_lag) %>% 
+    summarize(s.l = sum ( rating - mu - b.m - b.u - b.g), n.l = n()) %>% 
+    mutate(b.l = s.l/(n.l+lambda.opt))
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+gc()    
+
+````
+
+\newpage   
+
+## Enhance validation set
+
+Before we can apply the model to the validation set, we need to have the same structure as in edx.
+Therefor we apply the same transformations and enhancements as we did for edx.
+
+Notice: We do not draw conclusions for the final model from validation nor we enhance information from outside.  
+The variables we add are just derived from intrinsic information within the validation set.
+
+
+```` {r enhance validate, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide" }
+
+#____________________________________________________________________________
+    
+# ** Enhance validation ----------------------------------------------------
+#____________________________________________________________________________
+    
+# Prepare validation-set for final model
+
+  # genres as factor
+      validation$genres <- as.factor(validation$genres)   
+      
+  # convert timestamp to POSIX date.time 
+      validation$ts_date <- 
+        as.POSIXct(validation$timestamp, origin="1970-01-01") 
+      
+  # extract movie year from title 
+      validation$year <- validation$title %>% str_sub(-5,-2) %>% as.numeric()  
+      
+  # create 'year of rating'   &   'rating-lag' 
+      validation <- validation %>% 
+        mutate ( year.rating = as.numeric(isoyear(ts_date)),
+                  rating_lag =  year.rating - year,
+                  rating_lag = ifelse (rating_lag<0,0,rating_lag)) 
+      
+````
+
+\newpage
+
+## Results for the final evaluation
+
+```` {r final validation, message=FALSE, warning=FALSE, echo=TRUE, eval=TRUE, results = "hide" }
+
+#____________________________________________________________________________
+
+# Final prediction ---------------------------------------------------------
+#____________________________________________________________________________
+
+# Final prediction
+  predicted <-
+    validation %>% 
+    left_join(b.movie.f, by='movieId') %>% 
+    left_join(b.user.f, by='userId') %>% 
+    left_join(b.genre.f, by='genres') %>% 
+    left_join(b.lag.f, by='rating_lag') %>% 
+    mutate (pred = mu + b.m + b.u + b.g + b.l) %>% 
+    pull(pred)
+  
+  rmse.final <- RMSE (validation$rating, predicted)
+ 
+## save model result to overall results dataframe   
+
+  results <- rbind(results, data.frame(
+                      Method  ="m6 movie+user+genre+lag effect reg. one4all", 
+                      RMSE =  rmse.final,
+                      reference = "validation CV 5f", 
+                      lambda = lambda.opt,
+                      duration = 'na'))
+
+````
+
+The table with the final results:
+```` {r m6 review , message=FALSE, warning=FALSE,  echo=FALSE}
+
+## present overall results
+  results %>% kable()  
+    
+````
+
+**The final RMSE on validation is `r rmse.final`.**
+  
+\newpage 
+
+# Summary
+
+The project's target was to predict movie ratings, based on a historical dataset from movielens (10M version).
+After downloading and preparing the data, a quick view on the data gave a first impression of the content.  
+Enhancing the data set enabled an advanced view on the data from different angles.
+As a kind of data-journey, the data exploration and visualization gave a deeper insight and inspired ideas for possible prediction parameters.  
+Based on the gained insight, the methods were defined and, out of curiosity, the strategy to check the impact regularization with lambda per effect versus one-lambda-for all. Also the challenge between two temporal effects was included in the procedure. 
+Enhancing the models followed the plan and showed different levels of improvement. After taking the decisions on 'what lambda' & 'what temporal effect' the final model met the target of a RMSE < 0.86490.
+
+As the project focused on regression, other effects could have been used. E.g. to break the temporal effects further down to find seasonal effects: Do users rate different on certain weekdays? Is there a seasonal mood (christmas, spring, summerholiday,...) influencing the users ratings? 
+Other optimization options for the future would be to apply special recommender algorithms. 
+
+From a personal point of view as quite a newbie in R, I can say I learned a lot about coding, R Markdown, memory issues and much more. I look forward to enhancing my knowledge and experience to more advanced ML methods.
+
+
+
+
+
+
+
